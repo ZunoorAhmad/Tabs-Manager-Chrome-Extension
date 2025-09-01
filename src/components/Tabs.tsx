@@ -134,6 +134,21 @@ function Tabs() {
     return () => clearInterval(interval);
   }, []);
 
+  // Persist timing data to chrome.storage.local
+  useEffect(() => {
+    if (openTabs.length > 0) {
+      const timingData = openTabs.reduce((acc, tab) => {
+        acc[tab.id] = {
+          openedAt: tab.openedAt,
+          totalActiveTime: tab.totalActiveTime
+        };
+        return acc;
+      }, {} as Record<number, { openedAt: number; totalActiveTime: number }>);
+      
+      chrome.storage.local.set({ tabTiming: timingData });
+    }
+  }, [openTabs]);
+
   // Close a tab
   const closeTab = (tabId: number) => {
     chrome.tabs.remove(tabId, () => {
