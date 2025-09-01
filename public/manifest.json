@@ -1,0 +1,17 @@
+{
+    "manifest_version": 3,
+    "name": "Tab Manager",
+    "version": "1.0",
+    "description": "View and manage open tabs (close, move, reorder).",
+    "permissions": [
+        "tabs",
+        "storage"
+    ],
+    "action": {
+        "default_popup": "index.html"
+    },
+    "icons": {
+        "48": "icon48.png",
+        "128": "icon48.png"
+    }
+}
