@@ -40,6 +40,7 @@ declare namespace chrome {
             updateProperties: { active?: boolean; highlighted?: boolean; url?: string; selected?: boolean; pinned?: boolean; muted?: boolean },
             callback?: (tab: Tab) => void
         ): void;
+        function get(tabId: number, callback: (tab: Tab) => void): void;
         
         // Event listeners
         const onUpdated: chrome.events.Event<(tabId: number, changeInfo: TabChangeInfo, tab: Tab) => void>;
@@ -48,6 +49,10 @@ declare namespace chrome {
     }
     namespace runtime {
         const lastError: { message: string } | undefined;
+        function sendMessage(message: Record<string, unknown>, responseCallback?: (response: unknown) => void): void;
+        const onMessage: chrome.events.Event<(message: Record<string, unknown>, sender: Record<string, unknown>, sendResponse: (response?: Record<string, unknown>) => void) => void>;
+        const onStartup: chrome.events.Event<() => void>;
+        const onInstalled: chrome.events.Event<() => void>;
     }
     namespace events {
         interface Event<T extends (...args: unknown[]) => void> {
@@ -60,5 +65,9 @@ declare namespace chrome {
             function get(keys: string | string[] | Record<string, unknown> | null, callback: (items: Record<string, unknown>) => void): void;
             function set(items: Record<string, unknown>, callback?: () => void): void;
         }
+    }
+    namespace windows {
+        const WINDOW_ID_NONE: number;
+        const onFocusChanged: chrome.events.Event<(windowId: number) => void>;
     }
 }
