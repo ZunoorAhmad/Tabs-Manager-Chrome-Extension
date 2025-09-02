@@ -10,6 +10,9 @@
     "action": {
         "default_popup": "index.html"
     },
+    "background": {
+        "service_worker": "background.js"
+    },
     "icons": {
         "48": "icon48.png",
         "128": "icon48.png"
