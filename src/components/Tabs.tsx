@@ -13,7 +13,12 @@ interface TabWithTiming extends TabWithId {
   totalActiveTime: number;
 }
 
-function Tabs() {
+interface TabsProps {
+  onTabClick: (tabId: number) => void;
+  onViewClosedTabs: () => void;
+}
+
+function Tabs({ onTabClick, onViewClosedTabs }: TabsProps) {
   const [openTabs, setOpenTabs] = useState<TabWithTiming[]>([]);
   const [error, setError] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -44,110 +49,45 @@ function Tabs() {
     });
   };
 
-  // Load persisted timing data on mount
+  // Load timing data from background script
   useEffect(() => {
-    chrome.storage.local.get(['tabTiming'], (result: Record<string, unknown>) => {
-      if (result.tabTiming) {
-        const timingData = result.tabTiming as Record<number, { openedAt: number; totalActiveTime: number }>;
-        setOpenTabs(prev => prev.map(tab => {
-          const savedData = timingData[tab.id];
-          if (savedData) {
-            return {
-              ...tab,
-              openedAt: savedData.openedAt,
-              totalActiveTime: savedData.totalActiveTime,
-              activeStartTime: tab.active ? Date.now() : undefined
-            };
-          }
-          return tab;
-        }));
-      }
-    });
+    const loadTimingData = () => {
+      chrome.runtime.sendMessage({ action: 'getTimingData' }, (response: unknown) => {
+        const typedResponse = response as { timingData: Record<number, { openedAt: number; totalActiveTime: number; currentActiveTime?: number }> };
+        if (chrome.runtime.lastError) {
+          console.warn('Failed to get timing data:', chrome.runtime.lastError.message);
+          return;
+        }
+        
+        if (typedResponse && typedResponse.timingData) {
+          setOpenTabs(prev => prev.map(tab => {
+            const savedData = typedResponse.timingData[tab.id];
+            if (savedData) {
+              return {
+                ...tab,
+                openedAt: savedData.openedAt,
+                totalActiveTime: savedData.totalActiveTime + (savedData.currentActiveTime || 0),
+                activeStartTime: tab.active ? Date.now() : undefined
+              };
+            }
+            return tab;
+          }));
+        }
+      });
+    };
+
+    // Load timing data when component mounts
+    loadTimingData();
+    
+    // Set up interval to refresh timing data
+    const interval = setInterval(loadTimingData, 1000);
+    
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
     loadTabs();
-    
-    // Set up tab update listener to track active state changes
-    const handleTabUpdate = (tabId: number, changeInfo: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) => {
-      if (changeInfo.status === 'complete' && tab.active) {
-        setOpenTabs(prev => prev.map(t => ({
-          ...t,
-          activeStartTime: t.id === tabId ? Date.now() : undefined
-        })));
-      }
-    };
-
-    const handleTabActivate = (activeInfo: chrome.tabs.TabActiveInfo) => {
-      const now = Date.now();
-      setOpenTabs(prev => prev.map(t => {
-        if (t.id === activeInfo.tabId) {
-          // Start tracking active time for newly active tab
-          return { ...t, activeStartTime: now };
-        } else if (t.activeStartTime) {
-          // Add accumulated active time for previously active tab
-          const activeDuration = now - t.activeStartTime;
-          return { 
-            ...t, 
-            activeStartTime: undefined,
-            totalActiveTime: t.totalActiveTime + activeDuration
-          };
-        }
-        return t;
-      }));
-    };
-
-    // Also handle when tabs are removed to clean up timing data
-    const handleTabRemoved = (tabId: number) => {
-      setOpenTabs(prev => prev.filter(t => t.id !== tabId));
-    };
-
-    chrome.tabs.onUpdated.addListener(handleTabUpdate);
-    chrome.tabs.onActivated.addListener(handleTabActivate);
-    chrome.tabs.onRemoved.addListener(handleTabRemoved);
-
-    return () => {
-      chrome.tabs.onUpdated.removeListener(handleTabUpdate);
-      chrome.tabs.onActivated.removeListener(handleTabActivate);
-      chrome.tabs.onRemoved.removeListener(handleTabRemoved);
-    };
   }, []);
-
-  // Update active time tracking every second
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setOpenTabs(prev => prev.map(tab => {
-        if (tab.active && tab.activeStartTime) {
-          // Update active time for currently active tab
-          const now = Date.now();
-          const activeDuration = now - tab.activeStartTime;
-          return {
-            ...tab,
-            totalActiveTime: tab.totalActiveTime + activeDuration,
-            activeStartTime: now
-          };
-        }
-        return tab;
-      }));
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  // Persist timing data to chrome.storage.local
-  useEffect(() => {
-    if (openTabs.length > 0) {
-      const timingData = openTabs.reduce((acc, tab) => {
-        acc[tab.id] = {
-          openedAt: tab.openedAt,
-          totalActiveTime: tab.totalActiveTime
-        };
-        return acc;
-      }, {} as Record<number, { openedAt: number; totalActiveTime: number }>);
-      
-      chrome.storage.local.set({ tabTiming: timingData });
-    }
-  }, [openTabs]);
 
   // Close a tab
   const closeTab = (tabId: number) => {
@@ -235,14 +175,7 @@ function Tabs() {
 
   // Get active time for tab
   const getActiveTime = (tab: TabWithTiming): string => {
-    let totalTime = tab.totalActiveTime;
-    
-    // Add current active time if tab is currently active
-    if (tab.active && tab.activeStartTime) {
-      totalTime += Date.now() - tab.activeStartTime;
-    }
-    
-    return formatDuration(totalTime);
+    return formatDuration(tab.totalActiveTime);
   };
 
   const filteredTabs: TabWithTiming[] = useMemo(() => {
@@ -289,14 +222,25 @@ function Tabs() {
       {error && <p className="error">{error}</p>}
 
       <div className="toolbar">
-        <input
-          className="search"
-          type="text"
-          placeholder="Search tabs..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-        />
-        <button className="refresh" title="Refresh" onClick={loadTabs}>↻</button>
+        <div className="search-section">
+          <input
+            className="search"
+            type="text"
+            placeholder="Search tabs..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+        <div className="actions-section">
+          <button className="refresh" title="Refresh" onClick={loadTabs}>↻</button>
+          <button 
+            className="view-closed-btn" 
+            title="View Closed Tabs" 
+            onClick={onViewClosedTabs}
+          >
+            📚 History
+          </button>
+        </div>
       </div>
 
       <div className="result-meta">{filteredTabs.length} tab{filteredTabs.length === 1 ? '' : 's'}</div>
@@ -308,13 +252,13 @@ function Tabs() {
               {filteredTabs.map((tab: TabWithTiming, index) => (
                 <Draggable key={tab.id} draggableId={tab.id.toString()} index={index}>
                   {(provided) => (
-                    <li
-                      ref={provided.innerRef}
-                      {...provided.draggableProps}
-                      {...provided.dragHandleProps}
-                      className={`tab-item ${tab.active ? 'active' : ''}`}
-                      onClick={() => activateTab(tab.id!)}
-                    >
+                                         <li
+                       ref={provided.innerRef}
+                       {...provided.draggableProps}
+                       {...provided.dragHandleProps}
+                       className={`tab-item ${tab.active ? 'active' : ''}`}
+                       onClick={() => activateTab(tab.id!)}
+                     >
                       <div className="tab-leading">
                         {tab.favIconUrl ? (
                           <img className="favicon" src={tab.favIconUrl} alt="" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
@@ -330,31 +274,38 @@ function Tabs() {
                           <span className="timing-active">• Used {getActiveTime(tab)}</span>
                         </div>
                       </div>
-                      <div className="tab-actions" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          className="icon-btn"
-                          onClick={() => moveTab(tab.id!, 'left')}
-                          disabled={index === 0}
-                          title="Move left"
-                        >
-                          ←
-                        </button>
-                        <button
-                          className="icon-btn"
-                          onClick={() => moveTab(tab.id!, 'right')}
-                          disabled={index === filteredTabs.length - 1}
-                          title="Move right"
-                        >
-                          →
-                        </button>
-                        <button
-                          className="icon-btn close-btn"
-                          onClick={() => closeTab(tab.id!)}
-                          title="Close tab"
-                        >
-                          ×
-                        </button>
-                      </div>
+                                             <div className="tab-actions" onClick={(e) => e.stopPropagation()}>
+                         <button
+                           className="icon-btn details-btn"
+                           onClick={() => onTabClick(tab.id!)}
+                           title="View details"
+                         >
+                           📊
+                         </button>
+                         <button
+                           className="icon-btn"
+                           onClick={() => moveTab(tab.id!, 'left')}
+                           disabled={index === 0}
+                           title="Move left"
+                         >
+                           ◀
+                         </button>
+                         <button
+                           className="icon-btn"
+                           onClick={() => moveTab(tab.id!, 'right')}
+                           disabled={index === filteredTabs.length - 1}
+                           title="Move right"
+                         >
+                           ▶
+                         </button>
+                         <button
+                           className="icon-btn close-btn"
+                           onClick={() => closeTab(tab.id!)}
+                           title="Close tab"
+                         >
+                           ✕
+                         </button>
+                       </div>
                     </li>
                   )}
                 </Draggable>
